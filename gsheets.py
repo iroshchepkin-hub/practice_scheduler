@@ -1,0 +1,690 @@
+import gspread
+import pandas as pd
+import logging
+from google.oauth2.service_account import Credentials
+from config import config
+from datetime import datetime
+import time
+
+
+
+logger = logging.getLogger(__name__)
+
+
+class GoogleSheetsManager:
+    def __init__(self):
+        self.client = None
+        self.spreadsheet = None
+        self._full_data_cache = None
+        self._full_data_time = 0
+        self._current_week_cache = None
+        self._cache_time = 0
+        self.CACHE_TTL = 300  # 5 минут
+        self.connect()
+
+    def _get_full_data(self):
+        """Получить данные таблицы"""
+        import time
+
+        # Если кэш есть и не устарел
+        if self._full_data_cache and (time.time() - self._full_data_time < self.CACHE_TTL):
+            logger.debug("✅ Использую кэш всех данных")
+            return self._full_data_cache
+
+        # Загружаем свежие данные
+        logger.debug("🔄 Загружаю свежие данные из таблицы")
+        try:
+            worksheet = self.spreadsheet.worksheet("Расписание")
+            self._full_data_cache = worksheet.get_all_records()
+            self._full_data_time = time.time()
+            logger.info(f"📊 Данные закэшированы: {len(self._full_data_cache)} строк")
+            return self._full_data_cache
+        except Exception as e:
+            logger.error(f"Ошибка загрузки данных: {e}")
+            return []
+
+    def invalidate_cache(self):
+        """Очистить кэш (вызывать после записи)"""
+        self._full_data_cache = None
+        self._full_data_time = 0
+        logger.debug("🧹 Кэш очищен")
+
+    def connect(self):
+        """ Подключение к Google Sheets"""
+        try:
+            logger.info(f"🔐 Подключение к таблице...")
+
+            scopes = [
+                'https://www.googleapis.com/auth/spreadsheets',
+                'https://www.googleapis.com/auth/drive.file'
+            ]
+
+            credentials = Credentials.from_service_account_info(
+                config.GOOGLE_CREDENTIALS,
+                scopes=scopes
+            )
+
+            self.client = gspread.authorize(credentials)
+            self.spreadsheet = self.client.open_by_key(config.SPREADSHEET_ID)
+
+            logger.info("✅ Подключение к Google Sheets успешно")
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка подключения: {e}")
+            raise
+
+    def get_available_tariffs(self):
+        """Получить тарифы из кэша"""
+        try:
+            data = self._get_full_data()
+
+            if not data:
+                return []
+
+            tariffs = set()
+            for row in data:
+                tariff = str(row.get('Тариф', '')).strip()
+                if tariff and tariff != "Тренинг":
+                    tariffs.add(tariff)
+
+            result = list(tariffs)
+            logger.info(f"Тарифы из кэша: {len(result)}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Ошибка чтения тарифов: {e}")
+            return []
+
+    def get_current_week_number(self) -> int:
+        """Читает текущую неделю из Google Sheets"""
+
+        if self._current_week_cache and time.time() - self._cache_time < self.CACHE_TTL:
+            return self._current_week_cache
+
+        try:
+
+            settings_ws = self.spreadsheet.worksheet("Настройки")
+
+            # Ячейка B3 (строка 3, колонка 2) - текущая неделя
+            week_cell = settings_ws.cell(3, 2).value
+
+            if not week_cell:
+                logger.warning("Ячейка с неделей пустая, возвращаем 1")
+                return 1
+
+
+            current_week = int(float(week_cell))
+
+
+            self._current_week_cache = current_week
+            self._cache_time = time.time()
+
+            logger.info(f"📅 Текущая неделя из таблицы: {current_week}")
+            return current_week
+
+        except Exception as e:
+            logger.error(f"Не удалось получить неделю из таблицы: {e}")
+
+            return 1
+
+    def get_available_weeks(self, tariff: str):
+        """Возвращает только текущую неделю, если есть свободные слоты"""
+        try:
+            current_week = self.get_current_week_number()
+
+            # Есть ли слоты на этой неделе
+            slots = self.get_available_slots(tariff, current_week)
+
+            if slots:
+                logger.info(f"Для тарифа '{tariff}' доступна неделя {current_week}")
+                return [current_week]
+            else:
+                logger.info(f"Для тарифа '{tariff}' нет слотов на неделе {current_week}")
+                return []
+
+        except Exception as e:
+            logger.error(f"Ошибка в get_available_weeks: {e}")
+            return []
+
+    def get_nearest_available_week(self, tariff: str):
+        """Найти ближайшую неделю"""
+        try:
+            logger.debug(f"Поиск ближайшей недели для тарифа '{tariff}'")
+
+            worksheet = self.spreadsheet.worksheet("Расписание")
+            data = worksheet.get_all_records()
+            df = pd.DataFrame(data)
+
+            if df.empty:
+                return None
+
+            # Нормализуем данные
+            df['Тариф_норм'] = df['Тариф'].astype(str).str.strip()
+            df['Статус_норм'] = df['Статус'].astype(str).str.strip().str.lower()
+            df['Студент_норм'] = df['Студент'].fillna('').astype(str).str.strip()
+
+            # Функция для преобразования недели
+            def try_float(x):
+                try:
+                    return float(str(x).strip())
+                except:
+                    return None
+
+            df['Неделя_норм'] = df['Неделя'].apply(try_float)
+
+            # Фильтр
+            mask = (
+                    (df['Тариф_норм'] == tariff.strip()) &
+                    (df['Статус_норм'] == 'Активно') &
+                    (df['Студент_норм'] == '') &
+                    df['Неделя_норм'].notna()
+            )
+
+            filtered_df = df[mask]
+
+            if filtered_df.empty:
+                logger.info(f"Для тарифа '{tariff}' нет свободных слотов")
+                return None
+
+
+            nearest_week = filtered_df['Неделя_норм'].min()
+
+            logger.info(f"Для тарифа '{tariff}' ближайшая неделя: {nearest_week}")
+            return nearest_week
+
+        except Exception as e:
+            logger.error(f"Ошибка поиска недели: {e}", exc_info=True)
+            return None
+
+    def get_available_slots(self, tariff: str, week: float):
+        """Получить слоты где есть свободные места"""
+        try:
+            worksheet = self.spreadsheet.worksheet("Расписание")
+            data = worksheet.get_all_records()
+            df = pd.DataFrame(data)
+
+            if df.empty:
+                return []
+
+            df['Тариф_норм'] = df['Тариф'].astype(str).str.strip()
+            df['Статус_норм'] = df['Статус'].astype(str).str.strip().str.lower()
+
+            # Функция для преобразования недели
+            def try_float(x):
+                try:
+                    return float(str(x).strip())
+                except:
+                    return None
+
+            df['Неделя_норм'] = df['Неделя'].apply(try_float)
+
+            # ФИЛЬТР
+            mask = (
+                    (df['Тариф_норм'] == tariff.strip()) &
+                    (df['Неделя_норм'] == float(week)) &
+                    (df['Статус_норм'] == 'активно')
+            )
+
+            filtered_df = df[mask]
+
+            if filtered_df.empty:
+                return []
+
+            slots = []
+            for idx, row in filtered_df.iterrows():
+                row_index = idx + 2
+
+                # Определяем лимит мест
+                if tariff == "Базовый":
+                    max_seats = 4
+                    student_columns = ['Студент1', 'Студент2', 'Студент3', 'Студент4']
+                elif tariff == "Основной":
+                    max_seats = 3
+                    student_columns = ['Студент1', 'Студент2', 'Студент3']
+                else:
+                    max_seats = 1
+                    student_columns = ['Студент1']
+
+                booked_count = 0
+                for col in student_columns:
+                    cell_value = str(row.get(col, '')).strip()
+                    if cell_value and cell_value.strip():
+                        booked_count += 1
+
+                if booked_count >= max_seats:
+                    continue
+
+                # Форматируем дату и время
+                date_str = str(row['Дата']).split()[0]
+                date_display = self.format_date(date_str)
+
+                time_str = str(row['Время'])
+                if ' ' in time_str:
+                    time_str = time_str.split()[0][:5]
+                else:
+                    time_str = time_str[:5]
+
+                slots.append({
+                    'row_index': row_index,
+                    'date': date_display,
+                    'time': time_str,
+                    'mentor': row['Наставник'],
+                    'tariff': tariff,
+                    'week': week,
+                    'booked': booked_count,
+                    'available': max_seats - booked_count,
+                    'max_seats': max_seats
+                })
+
+            logger.info(f"Для тарифа '{tariff}', неделя {week} найдено слотов: {len(slots)}")
+            return slots
+
+        except Exception as e:
+            logger.error(f"Ошибка поиска слотов: {e}", exc_info=True)
+            return []
+
+    def get_available_slots_for_user(self, tariff: str, week: float, user_id: int):
+        """Возвращает слоты доступные для конкретного пользователя"""
+        all_slots = self.get_available_slots(tariff, week)
+
+        if not all_slots:
+            return []
+
+        # Проверяем, может ли пользователь записаться на эту неделю
+        if not self.can_user_book_this_week(user_id, week):
+            return []
+
+        user_slots = []
+        user_id_str = str(user_id)
+
+        worksheet = self.spreadsheet.worksheet("Расписание")
+        all_data = worksheet.get_all_values()
+
+        for slot in all_slots:
+            row_index = slot['row_index']
+            row = all_data[row_index - 1] if row_index - 1 < len(all_data) else []
+
+            # Проверяем, записан ли пользователь в этой строке
+            user_in_this_row = False
+            for col in range(6, 10):  # Колонки 7-10 (G-J)
+                if col < len(row):
+                    cell_value = str(row[col]).strip()
+                    if cell_value and f"{user_id_str}|" in cell_value:
+                        user_in_this_row = True
+                        break
+
+            if not user_in_this_row:
+                user_slots.append(slot)
+
+        return user_slots
+
+    def book_slot(self, row_index: int, user_id: int, full_name: str, username: str) -> bool:
+        """Запись студента на практику"""
+        try:
+            worksheet = self.spreadsheet.worksheet("Расписание")
+
+            # 1. Определяем неделю
+            week_cell = worksheet.cell(row_index, 2).value  # Колонка B - "Неделя"
+            if not week_cell:
+                logger.error(f"Не могу определить неделю в строке {row_index}")
+                return False
+
+            try:
+                week = float(week_cell)
+            except:
+                logger.error(f"Неверный формат недели: {week_cell}")
+                return False
+
+            # 2. Проверяем, не записан ли уже на эту неделю
+            if not self.can_user_book_this_week(user_id, week):
+                logger.warning(f"Пользователь {user_id} уже записан на неделю {week}")
+                return False
+
+            # 3. Проверяем, не записан ли уже в этой строке
+            row_values = worksheet.row_values(row_index)
+            user_id_str = str(user_id)
+
+            for col in range(7, 11):  # Студент1-4
+                if col - 1 < len(row_values):
+                    cell_value = str(row_values[col - 1]).strip()
+                    if cell_value and f"{user_id_str}|" in cell_value:
+                        logger.warning(f"❌ Пользователь {user_id} уже записан в строке {row_index}")
+                        return False
+
+            # 4. Определяем тариф и макс. места
+            tariff = worksheet.cell(row_index, 1).value
+            if tariff == "Базовый":
+                max_seats = 4
+            elif tariff == "Основной":
+                max_seats = 3
+            else:
+                max_seats = 1
+
+            # 5. Ищем свободное место
+            for seat_num in range(1, max_seats + 1):
+                col = 6 + seat_num  # 7, 8, 9, 10
+                cell_value = worksheet.cell(row_index, col).value
+
+                if not cell_value or str(cell_value).strip() == '':
+                    # Записываем
+                    student_info = f"{user_id}|{full_name}|{username or 'нет'}"
+                    worksheet.update_cell(row_index, col, student_info)
+
+                    logger.info(f"✅ Запись: строка {row_index}, место {seat_num}/{max_seats}, ID={user_id}")
+
+                    # ОЧИЩАЕМ КЭШ ПОСЛЕ УСПЕШНОЙ ЗАПИСИ
+                    self.invalidate_cache()
+
+                    return True
+
+            logger.warning(f"❌ Нет свободных мест в строке {row_index}")
+            return False
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи: {e}")
+            return False
+
+    def format_date(self, date_str: str) -> str:
+        """Форматируем дату: '2024-12-10' → '10 декабря'"""
+        try:
+            if not any(c.isdigit() for c in date_str):
+                return date_str
+
+            date_part = date_str.split()[0]
+
+            # Пробуем разные форматы
+            for fmt in ("%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y", "%d-%m-%Y"):
+                try:
+                    dt = datetime.strptime(date_part, fmt)
+                    break
+                except ValueError:
+                    continue
+            else:
+                return date_str
+
+            months = {
+                1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+                5: "мая", 6: "июня", 7: "июля", 8: "августа",
+                9: "сентября", 10: "октября", 11: "ноября", 12: "декабря"
+            }
+
+            return f"{dt.day} {months[dt.month]}"
+
+        except Exception:
+            return date_str
+
+    def get_user_bookings(self, user_id: int, username: str = "", full_name: str = ""):
+        """Найти записи пользователя"""
+        try:
+            worksheet = self.spreadsheet.worksheet("Расписание")
+            data = worksheet.get_all_records()
+            df = pd.DataFrame(data)
+
+            if df.empty:
+                return []
+
+            bookings = []
+
+            for _, row in df.iterrows():
+                for seat_col in ['Студент1', 'Студент2', 'Студент3', 'Студент4']:
+                    student_cell = str(row.get(seat_col, '')).strip()
+
+                    if not student_cell or '|' not in student_cell:
+                        continue
+
+                    # данные студента: "user_id|full_name|username"
+                    parts = student_cell.split('|')
+                    if len(parts) < 3:
+                        continue
+
+                    cell_user_id = parts[0].strip()
+                    cell_full_name = parts[1].strip()
+                    cell_username = parts[2].strip()
+
+                    # совпадение
+                    if (cell_user_id == str(user_id) or
+                            (username and f"@{username}" in cell_username) or
+                            (full_name and full_name.lower() in cell_full_name.lower())):
+
+
+                        date_str = str(row['Дата']).split()[0]
+                        date_display = self.format_date(date_str)
+
+
+                        time_str = str(row['Время'])
+                        if ' ' in time_str:
+                            time_str = time_str.split()[0][:5]
+                        else:
+                            time_str = time_str[:5]
+
+                        bookings.append({
+                            'date': date_display,
+                            'time': time_str,
+                            'week': row.get('Неделя', ''),
+                        })
+                        break
+
+            logger.info(f"Найдено записей для user_id={user_id}: {len(bookings)}")
+            return bookings
+
+        except Exception as e:
+            logger.error(f"Ошибка get_user_bookings: {e}")
+            return []
+
+    def is_user_already_booked(self, user_id: int, date_str: str) -> bool:
+        """Проверяет, записан ли пользователь уже на эту дату"""
+        try:
+            worksheet = self.spreadsheet.worksheet("Расписание")
+            data = worksheet.get_all_records()
+            df = pd.DataFrame(data)
+
+            if df.empty:
+                return False
+
+            # Проверяем все столбцы Студент1-4
+            for seat_col in ['Студент1', 'Студент2', 'Студент3', 'Студент4']:
+                # Фильтруем строки где в этом столбце есть наш user_id
+                mask = df[seat_col].astype(str).str.contains(str(user_id))
+                matching_rows = df[mask]
+
+                # Проверяем даты в найденных строках
+                for _, row in matching_rows.iterrows():
+                    row_date = str(row['Дата']).split()[0]
+                    if row_date == date_str.split()[0]:
+                        logger.info(f"Пользователь {user_id} уже записан на {date_str}")
+                        return True
+
+            return False
+
+        except Exception as e:
+            logger.error(f"Ошибка проверки дублей: {e}")
+            return False
+
+    def can_user_book_this_week(self, user_id: int, week: float, check_only_practice=True) -> bool:
+        """ Может ли пользователь записаться на эту неделю"""
+        try:
+            data = self._get_full_data()
+            user_id_str = str(user_id)
+
+            for row in data:
+                # Проверяем номер недели
+                try:
+                    row_week = float(str(row.get('Неделя', 0)))
+                except:
+                    continue
+
+                if row_week != week:
+                    continue
+
+                # Определяем тип записи
+                tariff = str(row.get('Тариф', '')).strip()
+
+                # Проверяем колонки студента
+                user_found = False
+                for i in range(1, 11):  # Студент1-10
+                    col_name = f"Студент{i}"
+                    if i == 2 or i == 3:
+                        col_name += " "
+
+                    cell_value = str(row.get(col_name, '')).strip()
+                    if cell_value and f"{user_id_str}|" in cell_value:
+                        user_found = True
+                        break
+
+                if user_found:
+                    # Пользователь найден в этой строке
+                    if tariff == "Тренинг":
+                        if check_only_practice:
+                            logger.info(
+                                f"✅ Пользователь {user_id} записан на тренинг недели {week}")
+                            continue
+                        else:
+
+                            logger.info(f"❌ Пользователь {user_id} уже записан на тренинг недели {week}")
+                            return False
+                    else:
+
+                        logger.info(f"❌ Пользователь {user_id} уже записан на практику недели {week}")
+                        return False
+
+
+            logger.info(f"✅ Пользователь {user_id} может записаться на неделю {week}")
+            return True
+
+        except Exception as e:
+            logger.error(f"Ошибка проверки недели: {e}")
+            return True
+
+
+
+
+    def get_available_trainings(self):
+        """Получить тренинги из кэша"""
+        try:
+            data = self._get_full_data()
+
+            if not data:
+                return []
+
+            trainings = []
+            MAX_SEATS = 10
+
+            for idx, row in enumerate(data):
+                tariff = str(row.get('Тариф', '')).strip()
+                if tariff != "Тренинг":
+                    continue
+
+                status = str(row.get('Статус', '')).strip().lower()
+                if status != 'активно':
+                    continue
+
+                row_index = idx + 2
+
+                # Форматируем дату и время
+                date_str = str(row.get('Дата', '')).split()[0]
+                date_display = self.format_date(date_str)
+
+                time_str = str(row.get('Время', ''))
+                if ' ' in time_str:
+                    time_str = time_str.split()[0][:5]
+                else:
+                    time_str = time_str[:5]
+
+                # Считаем занятые места (из кэша!)
+                booked = 0
+                for i in range(1, MAX_SEATS + 1):
+                    col_name = f"Студент{i}"
+                    if i == 2 or i == 3:
+                        col_name += " "  # Пробелы!
+                    cell_value = str(row.get(col_name, '')).strip()
+                    if cell_value:
+                        booked += 1
+
+                available = MAX_SEATS - booked
+                if available > 0:
+                    trainings.append({
+                        'row_index': row_index,
+                        'date': date_display,
+                        'time': time_str,
+                        'available': available,
+                        'max_seats': MAX_SEATS,
+                    })
+
+            logger.info(f"Тренинги из кэша: {len(trainings)}")
+            return trainings
+
+        except Exception as e:
+            logger.error(f"Ошибка получения тренингов: {e}")
+            return []
+
+    def get_training_details(self, row_index: int):
+        try:
+            worksheet = self.spreadsheet.worksheet("Расписание")
+            row_values = worksheet.row_values(row_index)
+
+            if len(row_values) < 5:
+                return None
+
+            date_str = row_values[2].split()[0] if len(row_values) > 2 else ""
+            date_display = self.format_date(date_str)
+
+            time_str = row_values[3] if len(row_values) > 3 else ""
+            if ' ' in time_str:
+                time_str = time_str.split()[0][:5]
+            else:
+                time_str = time_str[:5]
+
+            return {
+                'date': date_display,
+                'time': time_str,
+                'row_index': row_index
+            }
+
+        except Exception as e:
+            logger.error(f"Ошибка получения деталей тренинга: {e}")
+            return None
+
+    def book_training(self, row_index: int, user_id: int, full_name: str, username: str) -> bool:
+        """Запись на тренинг"""
+        try:
+            worksheet = self.spreadsheet.worksheet("Расписание")
+
+            # 1. Проверяем, не записан ли уже
+            row_values = worksheet.row_values(row_index)
+            user_id_str = str(user_id)
+
+            # Проверяем все 10 колонок
+            for col in range(7, 17):  # Студент1-10 (колонки G-P)
+                if col - 1 < len(row_values):
+                    cell_value = str(row_values[col - 1]).strip()
+                    if cell_value and f"{user_id_str}|" in cell_value:
+                        logger.warning(f"❌ Пользователь {user_id} уже записан на этот тренинг")
+                        return False
+
+            # 2. Ищем свободное место (10 мест максимум)
+            MAX_SEATS = 10
+
+            for seat_num in range(1, MAX_SEATS + 1):
+                col = 6 + seat_num  # 7, 8, 9, ..., 16
+                cell_value = worksheet.cell(row_index, col).value
+
+                if not cell_value or str(cell_value).strip() == '':
+                    # Записываем
+                    student_info = f"{user_id}|{full_name}|{username or 'нет'}"
+                    worksheet.update_cell(row_index, col, student_info)
+
+                    logger.info(f"✅ Запись на тренинг: строка {row_index}, место {seat_num}/{MAX_SEATS}")
+
+                    # ОЧИЩАЕМ КЭШ ПОСЛЕ УСПЕШНОЙ ЗАПИСИ
+                    self.invalidate_cache()
+
+                    return True
+
+            logger.warning(f"❌ Нет свободных мест на тренинге (строка {row_index})")
+            return False
+
+        except Exception as e:
+            logger.error(f"❌ Ошибка записи на тренинг: {e}")
+            return False
+
+gsheets = GoogleSheetsManager()
