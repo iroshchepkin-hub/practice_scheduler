@@ -1,4 +1,4 @@
-# notifier.py - правильное логирование
+
 import asyncio
 import logging
 from datetime import datetime, timedelta
@@ -7,7 +7,7 @@ import sys
 from aiogram import Bot
 from config import config
 from gsheets import GoogleSheetsManager
-
+from gsheets import gsheets
 
 
 def setup_logging(debug: bool = False):
@@ -43,6 +43,8 @@ class Notifier:
     def __init__(self):
         self.bot: Optional[Bot] = None
         self.gs: Optional[GoogleSheetsManager] = None
+
+
 
     async def setup(self):
         """Инициализация ресурсов"""
@@ -204,6 +206,7 @@ class Notifier:
         logger.info(" Запуск проверки уведомлений")
 
         try:
+            self.gs = gsheets
             await self.setup()
 
             # Получаем данные из таблицы
@@ -220,7 +223,7 @@ class Notifier:
             logger.info(f" Проверка завершена. Отправлено уведомлений: {notifications_sent}")
 
         except Exception as e:
-            logger.error(f"Критическая ошибка: {e}", exc_info=True)
+            logger.error(f"Notifier error: {e}")
 
         finally:
             await self.cleanup()
