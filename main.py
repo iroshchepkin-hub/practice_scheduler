@@ -7,7 +7,8 @@ from notifier import Notifier
 import threading
 from aiogram.filters import Command
 from aiogram.types import Message
-
+from aiogram import types
+from aiogram import Router
 
 from config import config
 from handlers.start import router as start_router
@@ -23,8 +24,11 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-@dp.message(Command("notify"))
-async def cmd_notify(message: Message):
+\
+notify_router = Router()
+
+@notify_router.message(Command("notify"))
+async def cmd_notify(message: types.Message):
     """Ручной запуск уведомлений"""
     notifier = Notifier()
     await notifier.run()
@@ -65,12 +69,12 @@ async def main():
     dp.include_router(start_router)
     dp.include_router(booking_router)
     dp.include_router(my_bookings_router)
+    dp.include_router(notify_router)
 
     notifier_thread = threading.Thread(target=run_notifier_in_thread, daemon=True)
     notifier_thread.start()
     logger.info("✅ Фоновые уведомления запущены")
 
-    dp.message.register(cmd_notify)
 
     # dp.message.middleware(ChatMembershipMiddleware())
     # dp.callback_query.middleware(ChatMembershipMiddleware())
