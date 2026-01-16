@@ -501,60 +501,69 @@ class GoogleSheetsManager:
             return False
 
     def can_user_book_this_week(self, user_id: int, week: float, check_only_practice=True) -> bool:
-        """ Может ли пользователь записаться на эту неделю"""
+        """Может ли пользователь записаться на эту неделю"""
         try:
             data = self._get_full_data()
             user_id_str = str(user_id)
 
-            for row in data:
-                # Проверяем номер недели
+            logger.info(f"🔍 ПРОВЕРКА недели {week} для user_id={user_id}")
+            logger.info(f"📊 Всего записей в кэше: {len(data)}")
+
+            found_in_week = False
+
+            for idx, row in enumerate(data, 1):
+                # 1. Получаем неделю из строки
+                row_week_raw = str(row.get('Неделя', '')).strip()
+                logger.debug(f"Строка {idx}: неделя='{row_week_raw}'")
+
                 try:
-                    row_week = float(str(row.get('Неделя', 0)))
+                    row_week = float(row_week_raw)
                 except:
+                    continue  # Не число
+
+                # 2. Сравниваем недели
+                if abs(row_week - float(week)) > 0.01:  # Допуск для float
                     continue
 
-                if row_week != week:
-                    continue
+                found_in_week = True
+                logger.info(f"📅 Нашли запись недели {week}: строка {idx}")
+                logger.info(f"   Тариф: '{row.get('Тариф', '')}'")
 
-                # Определяем тип записи
-                tariff = str(row.get('Тариф', '')).strip()
-
-                # Проверяем колонки студента
-                user_found = False
-                for i in range(1, 11):  # Студент1-10
+                # 3. Проверяем все 10 колонок студентов
+                user_found_in_row = False
+                for i in range(1, 11):
                     col_name = f"Студент{i}"
-                    if i == 2 or i == 3:
-                        col_name += " "
-
                     cell_value = str(row.get(col_name, '')).strip()
+
                     if cell_value and f"{user_id_str}|" in cell_value:
-                        user_found = True
+                        user_found_in_row = True
+                        logger.info(f"   ❌ Найден в {col_name}: '{cell_value}'")
                         break
 
-                if user_found:
-                    # Пользователь найден в этой строке
+                # 4. Если пользователь найден в этой строке
+                if user_found_in_row:
+                    tariff = str(row.get('Тариф', '')).strip()
+
                     if tariff == "Тренинг":
                         if check_only_practice:
-                            logger.info(
-                                f"✅ Пользователь {user_id} записан на тренинг недели {week}")
+                            logger.info(f"   📘 Это тренинг, игнорируем для проверки практики")
                             continue
                         else:
-
-                            logger.info(f"❌ Пользователь {user_id} уже записан на тренинг недели {week}")
+                            logger.info(f"   ❌ Уже записан на тренинг недели {week}")
                             return False
                     else:
-
-                        logger.info(f"❌ Пользователь {user_id} уже записан на практику недели {week}")
+                        logger.info(f"   ❌ Уже записан на практику недели {week} (тариф: {tariff})")
                         return False
 
+            if not found_in_week:
+                logger.info(f"📭 Вообще не найдено записей недели {week}")
 
             logger.info(f"✅ Пользователь {user_id} может записаться на неделю {week}")
             return True
 
         except Exception as e:
-            logger.error(f"Ошибка проверки недели: {e}")
+            logger.error(f"Ошибка проверки недели: {e}", exc_info=True)
             return True
-
 
 
 
