@@ -24,7 +24,6 @@ logging.basicConfig(
     datefmt='%Y-%m-%d %H:%M:%S'
 )
 
-\
 notify_router = Router()
 
 @notify_router.message(Command("notify"))
