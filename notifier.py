@@ -123,7 +123,8 @@ class Notifier:
         """ID всех пользователей из записи (столбцы Студент1-4)"""
         user_ids = []
 
-        for seat_col in ['Студент1', 'Студент2', 'Студент3', 'Студент4']:
+        for i in range(1, 26):
+            seat_col = f"Студент{i}"
             student_cell = str(record.get(seat_col, '')).strip()
 
             if not student_cell or '|' not in student_cell:

@@ -49,6 +49,7 @@ class GoogleSheetsManager:
         self._full_data_time = 0
         logger.debug("🧹 Кэш очищен")
 
+
     def connect(self):
         """ Подключение к Google Sheets"""
         try:
@@ -234,7 +235,13 @@ class GoogleSheetsManager:
             for idx, row in filtered_df.iterrows():
                 row_index = idx + 2
 
-                # Определяем лимит мест
+                date_str = str(row.get('Дата', '')).split()[0]
+                time_str = str(row.get('Время', ''))
+
+                if not self.is_future_date(date_str, time_str):
+                    continue
+
+                    # Определяем лимит мест
                 if tariff == "Базовый":
                     max_seats = 4
                     student_columns = ['Студент1', 'Студент2', 'Студент3', 'Студент4']
@@ -283,6 +290,8 @@ class GoogleSheetsManager:
             logger.error(f"Ошибка поиска слотов: {e}", exc_info=True)
             return []
 
+
+
     def get_available_slots_for_user(self, tariff: str, week: float, user_id: int):
         """Возвращает слоты доступные для конкретного пользователя"""
         all_slots = self.get_available_slots(tariff, week)
@@ -317,6 +326,46 @@ class GoogleSheetsManager:
                 user_slots.append(slot)
 
         return user_slots
+
+
+
+    def is_future_date(self, date_str: str, time_str: str) -> bool:
+        """Проверяет, что дата и время в будущем"""
+        try:
+            # Парсим дату
+            date_part = str(date_str).strip().split()[0]
+            time_part = str(time_str).strip()[:5]  # Берем только часы:минуты
+
+            date_formats = ["%Y-%m-%d", "%d.%m.%Y", "%d/%m/%Y"]
+
+            parsed_date = None
+            for fmt in date_formats:
+                try:
+                    parsed_date = datetime.strptime(date_part, fmt)
+                    break
+                except ValueError:
+                    continue
+
+            if not parsed_date:
+                logger.warning(f"Не удалось распарсить дату: '{date_str}'")
+                return True
+
+            try:
+                time_obj = datetime.strptime(time_part, "%H:%M")
+                parsed_date = parsed_date.replace(hour=time_obj.hour, minute=time_obj.minute)
+            except:
+                parsed_date = parsed_date.replace(hour=0, minute=0)
+
+            # Сравниваем с текущим временем
+            now = datetime.now()
+            is_future = parsed_date > now
+
+            logger.debug(f"Дата проверки: {date_str} {time_str} -> {parsed_date}, сейчас: {now}, будущее: {is_future}")
+            return is_future
+
+        except Exception as e:
+            logger.error(f"Ошибка проверки даты: {e}")
+            return True
 
     def book_slot(self, row_index: int, user_id: int, full_name: str, username: str) -> bool:
         """Запись студента на практику"""
@@ -426,7 +475,8 @@ class GoogleSheetsManager:
             bookings = []
 
             for _, row in df.iterrows():
-                for seat_col in ['Студент1', 'Студент2', 'Студент3', 'Студент4']:
+                for i in range(1, 26):
+                    seat_col = f"Студент{i}"
                     student_cell = str(row.get(seat_col, '')).strip()
 
                     if not student_cell or '|' not in student_cell:
@@ -531,7 +581,7 @@ class GoogleSheetsManager:
 
                 # 3. Проверяем все 10 колонок студентов
                 user_found_in_row = False
-                for i in range(1, 11):
+                for i in range(1, 26):
                     col_name = f"Студент{i}"
                     cell_value = str(row.get(col_name, '')).strip()
 
@@ -565,8 +615,6 @@ class GoogleSheetsManager:
             logger.error(f"Ошибка проверки недели: {e}", exc_info=True)
             return True
 
-
-
     def get_available_trainings(self):
         """Получить тренинги из кэша"""
         try:
@@ -576,7 +624,7 @@ class GoogleSheetsManager:
                 return []
 
             trainings = []
-            MAX_SEATS = 10
+            MAX_SEATS = 25
 
             for idx, row in enumerate(data):
                 tariff = str(row.get('Тариф', '')).strip()
@@ -587,24 +635,27 @@ class GoogleSheetsManager:
                 if status != 'активно':
                     continue
 
+                date_str = str(row.get('Дата', '')).split()[0]
+                time_str = str(row.get('Время', ''))
+
+                if not self.is_future_date(date_str, time_str):
+                    logger.info(f"Пропускаем прошедший тренинг: {date_str} {time_str}")
+                    continue
+
                 row_index = idx + 2
 
-                # Форматируем дату и время
-                date_str = str(row.get('Дата', '')).split()[0]
+                # Форматируем дату
                 date_display = self.format_date(date_str)
 
-                time_str = str(row.get('Время', ''))
                 if ' ' in time_str:
                     time_str = time_str.split()[0][:5]
                 else:
                     time_str = time_str[:5]
 
-                # Считаем занятые места (из кэша!)
+                # Считаем занятые места
                 booked = 0
                 for i in range(1, MAX_SEATS + 1):
                     col_name = f"Студент{i}"
-                    if i == 2 or i == 3:
-                        col_name += " "  # Пробелы!
                     cell_value = str(row.get(col_name, '')).strip()
                     if cell_value:
                         booked += 1
@@ -619,7 +670,7 @@ class GoogleSheetsManager:
                         'max_seats': MAX_SEATS,
                     })
 
-            logger.info(f"Тренинги из кэша: {len(trainings)}")
+            logger.info(f"Будущие тренинги: {len(trainings)}")
             return trainings
 
         except Exception as e:
@@ -658,23 +709,30 @@ class GoogleSheetsManager:
         try:
             worksheet = self.spreadsheet.worksheet("Расписание")
 
+            date_str = worksheet.cell(row_index, 3).value  # Колонка C - Дата
+            time_str = worksheet.cell(row_index, 4).value  # Колонка D - Время
+
+            if not self.is_future_date(date_str, time_str):
+                logger.warning(f"❌ Попытка записаться на прошедший тренинг: {date_str} {time_str}")
+                return False
+
             # 1. Проверяем, не записан ли уже
             row_values = worksheet.row_values(row_index)
             user_id_str = str(user_id)
 
             # Проверяем все 10 колонок
-            for col in range(7, 17):  # Студент1-10 (колонки G-P)
+            for col in range(7, 32):
                 if col - 1 < len(row_values):
                     cell_value = str(row_values[col - 1]).strip()
                     if cell_value and f"{user_id_str}|" in cell_value:
                         logger.warning(f"❌ Пользователь {user_id} уже записан на этот тренинг")
                         return False
 
-            # 2. Ищем свободное место (10 мест максимум)
-            MAX_SEATS = 10
+            # 2. Ищем свободное место
+            MAX_SEATS = 25
 
             for seat_num in range(1, MAX_SEATS + 1):
-                col = 6 + seat_num  # 7, 8, 9, ..., 16
+                col = 6 + seat_num
                 cell_value = worksheet.cell(row_index, col).value
 
                 if not cell_value or str(cell_value).strip() == '':
