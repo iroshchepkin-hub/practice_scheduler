@@ -47,7 +47,7 @@ def run_notifier_in_thread():
                 await notifier.run()
             except Exception as e:
                 logger.error(f"❌ Notifier error: {e}")
-            await asyncio.sleep(1800)
+            await asyncio.sleep(7201)
 
     loop.run_until_complete(task())
 
