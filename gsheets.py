@@ -1,3 +1,4 @@
+
 import gspread
 import pandas as pd
 import logging
@@ -5,8 +6,6 @@ from google.oauth2.service_account import Credentials
 from config import config
 from datetime import datetime
 import time
-
-
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +47,6 @@ class GoogleSheetsManager:
         self._full_data_cache = None
         self._full_data_time = 0
         logger.debug("🧹 Кэш очищен")
-
 
     def connect(self):
         """ Подключение к Google Sheets"""
@@ -97,84 +95,54 @@ class GoogleSheetsManager:
             return []
 
     def get_current_week_number(self) -> int:
-        """Читает текущую неделю из Google Sheets"""
+        """Читает текущую неделю из Google Sheets (B3), возвращает как есть (даже 0)"""
         try:
             settings_ws = self.spreadsheet.worksheet("Настройки")
-            # Ячейка B3 (строка 3, колонка 2) - текущая неделя
-            week_cell = settings_ws.cell(3, 2).value
+            week_cell = settings_ws.cell(3, 2).value  # B3
 
-            # Если B3 пустое
             if week_cell is None or str(week_cell).strip() == "":
-                logger.warning("B3 пустая, возвращаем неделю 1")
-                return 1
+                logger.warning("B3 пустая, возвращаем 0")
+                return 0
 
             try:
+                # Возвращаем как есть, даже если 0
                 current_week = int(float(str(week_cell).strip()))
-
-                # Если B3 = 0, возвращаем 1
-                if current_week <= 0:
-                    logger.warning(f"B3 содержит {current_week} (<=0), возвращаем 1")
-                    return 1
-
                 logger.info(f"📅 Текущая неделя из B3: {current_week}")
                 return current_week
-
             except (ValueError, TypeError) as e:
                 logger.error(f"Не число в B3: '{week_cell}', ошибка: {e}")
-                return 1
-
+                return 0
         except Exception as e:
             logger.error(f"Не удалось получить неделю из таблицы: {e}")
-            return 1
+            return 0
 
     def get_training_week_number(self) -> int:
-        """Читает неделю тренингов из ячейки B4"""
+        """Читает неделю тренингов из B4, если пусто - берет B3"""
         try:
             settings_ws = self.spreadsheet.worksheet("Настройки")
+            week_cell = settings_ws.cell(4, 2).value  # B4
 
-            # Ячейка B4 (строка 4, колонка 2)
-            week_cell = settings_ws.cell(4, 2).value
-
-            # Если B4 пустое или None или ""
             if week_cell is None or str(week_cell).strip() == "":
                 logger.warning("B4 пустая, используем B3")
                 return self.get_current_week_number()
 
-            # Пробуем преобразовать в число
             try:
                 training_week = int(float(str(week_cell).strip()))
-
-                # Проверяем что неделя > 0
-                if training_week <= 0:
-                    logger.warning(f"B4 содержит {training_week} (<=0), используем B3")
-                    return self.get_current_week_number()
-
                 logger.info(f"📅 Неделя тренингов из B4: {training_week}")
                 return training_week
-
             except (ValueError, TypeError) as e:
                 logger.error(f"Не число в B4: '{week_cell}', ошибка: {e}")
                 return self.get_current_week_number()
-
         except Exception as e:
             logger.error(f"Ошибка чтения B4: {e}")
             return self.get_current_week_number()
 
     def get_available_weeks(self, tariff: str):
-        """Возвращает только текущую неделю, если есть свободные слоты"""
+        """Возвращает только текущую неделю из B3 (даже если 0)"""
         try:
             current_week = self.get_current_week_number()
-
-            # Есть ли слоты на этой неделе
-            slots = self.get_available_slots(tariff, current_week)
-
-            if slots:
-                logger.info(f"Для тарифа '{tariff}' доступна неделя {current_week}")
-                return [current_week]
-            else:
-                logger.info(f"Для тарифа '{tariff}' нет слотов на неделе {current_week}")
-                return []
-
+            logger.info(f"📅 Текущая неделя для тарифа '{tariff}': {current_week}")
+            return [current_week]
         except Exception as e:
             logger.error(f"Ошибка в get_available_weeks: {e}")
             return []
@@ -219,7 +187,6 @@ class GoogleSheetsManager:
                 logger.info(f"Для тарифа '{tariff}' нет свободных слотов")
                 return None
 
-
             nearest_week = filtered_df['Неделя_норм'].min()
 
             logger.info(f"Для тарифа '{tariff}' ближайшая неделя: {nearest_week}")
@@ -230,50 +197,48 @@ class GoogleSheetsManager:
             return None
 
     def get_available_slots(self, tariff: str, week: float):
-        """Получить слоты где есть свободные места"""
+        """Получить слоты на указанной неделе (строгое равенство)"""
         try:
             worksheet = self.spreadsheet.worksheet("Расписание")
             data = worksheet.get_all_records()
-            df = pd.DataFrame(data)
 
-            if df.empty:
-                return []
-
-            df['Тариф_норм'] = df['Тариф'].astype(str).str.strip()
-            df['Статус_норм'] = df['Статус'].astype(str).str.strip().str.lower()
-
-            # Функция для преобразования недели
-            def try_float(x):
-                try:
-                    return float(str(x).strip())
-                except:
-                    return None
-
-            df['Неделя_норм'] = df['Неделя'].apply(try_float)
-
-            # ФИЛЬТР
-            mask = (
-                    (df['Тариф_норм'] == tariff.strip()) &
-                    (df['Неделя_норм'] == float(week)) &
-                    (df['Статус_норм'] == 'активно')
-            )
-
-            filtered_df = df[mask]
-
-            if filtered_df.empty:
+            if not data:
+                logger.info(f"📭 Таблица 'Расписание' пустая")
                 return []
 
             slots = []
-            for idx, row in filtered_df.iterrows():
-                row_index = idx + 2
 
+            for idx, row in enumerate(data, start=2):  # start=2 потому что первая строка заголовки
+                # Проверяем неделю (строгое равенство)
+                row_week_raw = str(row.get('Неделя', '')).strip()
+
+                try:
+                    row_week = float(row_week_raw)
+                except (ValueError, TypeError):
+                    continue  # Пропускаем если неделя не число
+
+                # СТРОГОЕ РАВЕНСТВО недель
+                if abs(row_week - float(week)) > 0.01:
+                    continue
+
+                # Проверяем тариф
+                row_tariff = str(row.get('Тариф', '')).strip()
+                if row_tariff != tariff.strip():
+                    continue
+
+                # Проверяем статус
+                status = str(row.get('Статус', '')).strip().lower()
+                if status != 'активно':
+                    continue
+
+                # Проверяем дату (только будущие)
                 date_str = str(row.get('Дата', '')).split()[0]
                 time_str = str(row.get('Время', ''))
 
                 if not self.is_future_date(date_str, time_str):
                     continue
 
-                    # Определяем лимит мест
+                # Определяем лимит мест
                 if tariff == "Базовый":
                     max_seats = 4
                     student_columns = ['Студент1', 'Студент2', 'Студент3', 'Студент4']
@@ -284,30 +249,30 @@ class GoogleSheetsManager:
                     max_seats = 1
                     student_columns = ['Студент1']
 
+                # Считаем занятые места
                 booked_count = 0
                 for col in student_columns:
                     cell_value = str(row.get(col, '')).strip()
                     if cell_value and cell_value.strip():
                         booked_count += 1
 
+                # Если все места заняты - пропускаем
                 if booked_count >= max_seats:
                     continue
 
                 # Форматируем дату и время
-                date_str = str(row['Дата']).split()[0]
                 date_display = self.format_date(date_str)
-
-                time_str = str(row['Время'])
+                time_str = str(row.get('Время', ''))
                 if ' ' in time_str:
                     time_str = time_str.split()[0][:5]
                 else:
                     time_str = time_str[:5]
 
                 slots.append({
-                    'row_index': row_index,
+                    'row_index': idx,
                     'date': date_display,
                     'time': time_str,
-                    'mentor': row['Наставник'],
+                    'mentor': row.get('Наставник', ''),
                     'tariff': tariff,
                     'week': week,
                     'booked': booked_count,
@@ -321,8 +286,6 @@ class GoogleSheetsManager:
         except Exception as e:
             logger.error(f"Ошибка поиска слотов: {e}", exc_info=True)
             return []
-
-
 
     def get_available_slots_for_user(self, tariff: str, week: float, user_id: int):
         """Возвращает слоты доступные для конкретного пользователя"""
@@ -358,8 +321,6 @@ class GoogleSheetsManager:
                 user_slots.append(slot)
 
         return user_slots
-
-
 
     def is_future_date(self, date_str: str, time_str: str) -> bool:
         """Проверяет, что дата и время в будущем"""
@@ -528,10 +489,8 @@ class GoogleSheetsManager:
                             (username and f"@{username}" in cell_username) or
                             (full_name and full_name.lower() in cell_full_name.lower())):
 
-
                         date_str = str(row['Дата']).split()[0]
                         date_display = self.format_date(date_str)
-
 
                         time_str = str(row['Время'])
                         if ' ' in time_str:
@@ -648,36 +607,43 @@ class GoogleSheetsManager:
             return True
 
     def get_available_trainings(self, user_id: int = None):
-        """Получить тренинги на текущую неделю"""
+        """Получить тренинги на неделю из B4"""
         try:
+            # Берем неделю из B4
+            current_week = self.get_training_week_number()
+            logger.info(f"🎯 Ищем тренинги на неделю {current_week} из B4")
+
+            # Если неделя = 0, сразу возвращаем пустой список
+            if current_week <= 0:
+                logger.info("📭 Неделя тренингов = 0, возвращаем пустой список")
+                return []
+
             data = self._get_full_data()
 
             if not data:
                 return []
 
-            # Берем текущую неделю из настроек
-            current_week = self.get_current_week_number()
-            logger.info(f"🎯 Ищем тренинги на неделю {current_week}")
-
             trainings = []
             MAX_SEATS = 25
 
-            for idx, row in enumerate(data):
+            for idx, row in enumerate(data, start=2):
+                # Проверяем тариф
                 tariff = str(row.get('Тариф', '')).strip()
                 if tariff != "Тренинг":
                     continue
 
-                status = str(row.get('Статус', '')).strip().lower()
-                if status != 'активно':
-                    continue
-
-                # ПРОВЕРЯЕМ НЕДЕЛЮ
+                # Проверяем неделю (строгое равенство)
                 try:
                     row_week = float(str(row.get('Неделя', 0)))
                 except:
                     continue
 
-                if row_week != current_week:
+                if abs(row_week - current_week) > 0.01:
+                    continue
+
+                # Проверяем статус
+                status = str(row.get('Статус', '')).strip().lower()
+                if status != 'активно':
                     continue
 
                 # Проверка даты
@@ -688,8 +654,6 @@ class GoogleSheetsManager:
                     logger.info(f"Пропускаем прошедший тренинг: {date_str} {time_str}")
                     continue
 
-                row_index = idx + 2
-
                 # Если передан user_id, проверяем может ли он записаться
                 if user_id and not self.can_user_book_this_week(user_id, current_week, check_only_practice=False):
                     logger.info(f"Пользователь {user_id} уже записан на тренинг недели {current_week}")
@@ -697,7 +661,6 @@ class GoogleSheetsManager:
 
                 # Форматируем дату и время
                 date_display = self.format_date(date_str)
-
                 if ' ' in time_str:
                     time_str = time_str.split()[0][:5]
                 else:
@@ -714,7 +677,7 @@ class GoogleSheetsManager:
                 available = MAX_SEATS - booked
                 if available > 0:
                     trainings.append({
-                        'row_index': row_index,
+                        'row_index': idx,
                         'date': date_display,
                         'time': time_str,
                         'available': available,
@@ -757,7 +720,7 @@ class GoogleSheetsManager:
             return None
 
     def book_training(self, row_index: int, user_id: int, full_name: str, username: str) -> bool:
-        """Запись на тренинг"""
+        """Запись на тренинг с проверкой недели из B4"""
         try:
             worksheet = self.spreadsheet.worksheet("Расписание")
 
@@ -769,11 +732,11 @@ class GoogleSheetsManager:
                     # Получаем текущую неделю тренингов ИЗ B4
                     current_training_week = self.get_training_week_number()
 
-                    # Проверяем, можно ли записываться на эту неделю
-                    if training_week_in_row != current_training_week:
+                    # Строгое сравнение недель
+                    if abs(training_week_in_row - current_training_week) > 0.01:
                         logger.warning(
                             f"❌ Тренинг недели {training_week_in_row} не доступен "
-                            f"(текущая неделя тренингов: {current_training_week})"
+                            f"(текущая неделя тренингов из B4: {current_training_week})"
                         )
                         return False
                 except Exception as e:
@@ -833,5 +796,6 @@ class GoogleSheetsManager:
         except Exception as e:
             logger.error(f"❌ Ошибка записи на тренинг: {e}")
             return False
+
 
 gsheets = GoogleSheetsManager()

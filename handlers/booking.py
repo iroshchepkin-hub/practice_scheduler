@@ -66,6 +66,17 @@ async def choose_tariff(callback: types.CallbackQuery, state: FSMContext):
 
     current_week = weeks[0]
 
+    # ПРОВЕРКА: если неделя = 0
+    if current_week <= 0:
+        await callback.message.edit_text(
+            f"❌ На текущей неделе ({int(current_week)}) нет практик.\n"
+            "Пожалуйста, дождитесь объявления новой недели.\n\n"
+            "По вопросам записи обращайтесь к администратору @elena_bobonich",
+            reply_markup=main_menu()
+        )
+        await state.clear()
+        return
+
     await state.update_data(tariff=tariff, week=current_week)
     await state.set_state(BookingStates.choose_slot)
 
@@ -82,13 +93,13 @@ async def choose_tariff(callback: types.CallbackQuery, state: FSMContext):
         else:
             # Нет свободных слотов
             await callback.message.edit_text(
-                f"❌ На неделе {int(current_week)} для тарифа '{tariff}' нет свободных слотов.",
+                f"❌ На неделе {int(current_week)} для тарифа '{tariff}' нет свободных слотов.\n"
+                "Попробуйте на следующей неделе!",
                 reply_markup=main_menu()
             )
 
         await state.clear()
         return
-
 
     slots_text = "\n".join([
         f"{i}. {slot['date']} {slot['time']} ({slot['available']}/{slot['max_seats']} мест)"
@@ -102,61 +113,6 @@ async def choose_tariff(callback: types.CallbackQuery, state: FSMContext):
         reply_markup=slots_keyboard(slots, tariff, current_week),
         parse_mode="HTML"
     )
-
-
-# ========== ВЫБОР НЕДЕЛИ ==========
-#
-# @router.callback_query(F.data.startswith("week:"))
-# async def choose_week(callback: types.CallbackQuery, state: FSMContext):
-#     """Обработка выбора недели"""
-#     await callback.answer()
-#
-#     logger.info(f"Выбор недели: {callback.data}")
-#
-#     parts = callback.data.split(":")
-#
-#     # Проверка формата
-#     if len(parts) < 3:
-#         logger.error(f"Неверный формат: {callback.data}")
-#         await callback.message.answer("❌ Ошибка данных. Попробуйте снова.")
-#         return
-#
-#     tariff = parts[1]
-#
-#     try:
-#         week = float(parts[2])
-#     except ValueError:
-#         logger.error(f"Неделя не число: {parts[2]}")
-#         await callback.message.answer(f"❌ Ошибка: неделя '{parts[2]}' не число")
-#         return
-#
-#
-#     await state.update_data(tariff=tariff, week=week)
-#     await state.set_state(BookingStates.choose_slot)
-#
-#     # Получаем слоты
-#     slots = gsheets.get_available_slots(tariff, week)
-#
-#     if not slots:
-#         await callback.message.edit_text(
-#             f"❌ На неделе {int(week)} для тарифа '{tariff}' нет свободных слотов.",
-#             reply_markup=main_menu()
-#         )
-#         await state.clear()
-#         return
-#
-#     # Формируем текст
-#     slots_text = "\n".join([
-#         f"{i}. {slot['date']} {slot['time']}"
-#         for i, slot in enumerate(slots, 1)
-#     ])
-#
-#     await callback.message.edit_text(
-#         f"Неделя: <b>{int(week)}</b>\n\n"
-#         f"🕐 Выберите удобное время:\n\n{slots_text}",
-#         reply_markup=slots_keyboard(slots, tariff, week),
-#         parse_mode="HTML"
-#     )
 
 
 # ========== ВЫБОР СЛОТА ==========
@@ -246,42 +202,9 @@ async def back_to_main_menu(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
 
     await callback.message.edit_text(
-        f"👋 Привет, {callback.from_user.first_name} ! Это бот для записи на занятия курса 'Эффективные продажи'..",
+        f"👋 Привет, {callback.from_user.first_name} ! Это бот для записи на занятия курса 'Эффективные продажи'.",
         reply_markup=main_menu()
     )
-
-# @router.callback_query(F.data.startswith("menu:back_to_weeks:"))
-# async def back_to_weeks(callback: types.CallbackQuery, state: FSMContext):
-#     """Возврат к выбору недели"""
-#     await callback.answer()
-#
-#     tariff = callback.data.split(":")[2]
-#
-#     # Получаем недели для этого тарифа
-#     nearest_week = gsheets.get_nearest_available_week(tariff)
-#     if nearest_week is None:
-#         # Нет свободных недель
-#         weeks = []
-#     else:
-#         weeks = [nearest_week]
-#
-#     if not weeks:
-#         await callback.message.edit_text(
-#             f"❌ Нет доступных недель.",
-#             reply_markup=main_menu()
-#         )
-#         await state.clear()
-#         return
-#
-#     await state.update_data(tariff=tariff)
-#     await state.set_state(BookingStates.choose_week)
-#
-#     await callback.message.edit_text(
-#         f"📅 Тариф: <b>{tariff}</b>\n\n"
-#         "Выберите неделю:",
-#         reply_markup=weeks_keyboard(weeks,tariff),
-#         parse_mode="HTML"
-#     )
 
 
 @router.callback_query(F.data.startswith("confirm:"))
@@ -299,7 +222,10 @@ async def confirm_booking(callback: types.CallbackQuery, state: FSMContext):
 
     if gsheets.book_slot(row_index, user.id, full_name, username):
         await callback.message.edit_text(
-            f"✅ <b>Вы записаны!</b>\n\n",
+            f"✅ <b>Вы записаны!</b>\n\n"
+            f"Неделя: <b>{int(week)}</b>\n"
+            f"Тариф: <b>{tariff}</b>\n\n"
+            f"Нажмите '📋 Мои записи', чтобы увидеть все ваши записи.",
             parse_mode="HTML",
             reply_markup=main_menu()
         )
@@ -315,6 +241,7 @@ async def confirm_booking(callback: types.CallbackQuery, state: FSMContext):
         )
 
     await state.clear()
+
 
 @router.callback_query(F.data == "menu:cancel_booking")
 async def cancel_booking(callback: types.CallbackQuery, state: FSMContext):
@@ -339,28 +266,39 @@ async def show_trainings(callback: types.CallbackQuery):
     user = callback.from_user
     logger.info(f"Пользователь {user.id} смотрит тренинги")
 
-    # Передаем user_id для проверки ограничений
+    # Получаем тренинги
     trainings = gsheets.get_available_trainings(user.id)
+
+    # Проверяем неделю из B4
+    training_week = gsheets.get_training_week_number()
+
+    if training_week <= 0:
+        await callback.message.edit_text(
+            f"❌ На текущей неделе ({int(training_week)}) нет тренингов.\n"
+            "Пожалуйста, дождитесь объявления новой недели.\n\n"
+            "По вопросам записи обращайтесь к администратору @elena_bobonich",
+            reply_markup=main_menu()
+        )
+        return
 
     if not trainings:
         await callback.message.edit_text(
-            "❌ Нет доступных тренингов для записи на текущей неделе.\n"
+            f"❌ Нет доступных тренингов для записи на неделе {int(training_week)}.\n"
             "Попробуйте на следующей неделе!",
             reply_markup=main_menu()
         )
         return
 
     # Проверяем, может ли пользователь вообще записаться
-    current_week = gsheets.get_current_week_number()
-    if not gsheets.can_user_book_this_week(user.id, current_week, check_only_practice=False):
+    if not gsheets.can_user_book_this_week(user.id, training_week, check_only_practice=False):
         await callback.message.edit_text(
-            f"❌ Вы уже записаны на тренинг или практику на неделе {int(current_week)}!",
+            f"❌ Вы уже записаны на тренинг или практику на неделе {int(training_week)}!",
             reply_markup=main_menu()
         )
         return
 
     await callback.message.edit_text(
-        f"🎓 <b>Доступные тренинги (неделя {int(current_week)}):</b>\n\n"
+        f"🎓 <b>Доступные тренинги (неделя {int(training_week)}):</b>\n\n"
         "Нажмите на тренинг для записи:",
         reply_markup=trainings_keyboard(trainings),
         parse_mode="HTML"
@@ -386,6 +324,7 @@ async def book_training(callback: types.CallbackQuery):
         if training:
             message = (
                 f"🎓 <b>Вы записаны на тренинг!</b>\n\n"
+                f"Неделя: <b>{int(gsheets.get_training_week_number())}</b>\n"
                 f"Дата: <b>{training['date']}</b>\n"
                 f"Время: <b>{training['time']}</b>\n"
             )
@@ -396,7 +335,8 @@ async def book_training(callback: types.CallbackQuery):
             "❌ <b>Не удалось записаться.</b>\n\n"
             "Возможные причины:\n"
             "• Вы уже записаны на этот тренинг\n"
-            "• Все места заняты"
+            "• Все места заняты\n"
+            "• Нельзя записываться на эту неделю"
         )
 
     await callback.message.edit_text(
@@ -404,3 +344,5 @@ async def book_training(callback: types.CallbackQuery):
         parse_mode="HTML",
         reply_markup=main_menu()
     )
+
+
