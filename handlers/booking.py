@@ -272,17 +272,14 @@ async def show_trainings(callback: types.CallbackQuery):
 
     if training_week <= 0:
         await callback.message.edit_text(
-            f"❌ На текущей неделе ({int(training_week)}) нет тренингов.\n"
-            "Пожалуйста, дождитесь объявления новой недели.\n\n"
-            "По вопросам записи обращайтесь к администратору @elena_bobonich",
+            f"❌ На текущей неделе ({int(training_week)}) нет тренингов.\n",
             reply_markup=main_menu()
         )
         return
 
     if not trainings:
         await callback.message.edit_text(
-            f"❌ Нет доступных тренингов для записи на неделе {int(training_week)}.\n"
-            "Попробуйте на следующей неделе!",
+            f"❌ Нет доступных тренингов для записи на неделе {int(training_week)}.\n",
             reply_markup=main_menu()
         )
         return
