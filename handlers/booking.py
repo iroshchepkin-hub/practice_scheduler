@@ -69,9 +69,7 @@ async def choose_tariff(callback: types.CallbackQuery, state: FSMContext):
     # ПРОВЕРКА: если неделя = 0
     if current_week <= 0:
         await callback.message.edit_text(
-            f"❌ На текущей неделе ({int(current_week)}) нет практик.\n"
-            "Пожалуйста, дождитесь объявления новой недели.\n\n"
-            "По вопросам записи обращайтесь к администратору @elena_bobonich",
+            f"❌ На текущей неделе нет практик.\n",
             reply_markup=main_menu()
         )
         await state.clear()
