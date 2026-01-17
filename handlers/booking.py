@@ -336,20 +336,31 @@ async def show_trainings(callback: types.CallbackQuery):
     """Показать доступные тренинги"""
     await callback.answer()
 
-    logger.info(f"Пользователь {callback.from_user.id} смотрит тренинги")
+    user = callback.from_user
+    logger.info(f"Пользователь {user.id} смотрит тренинги")
 
-    trainings = gsheets.get_available_trainings()
+    # Передаем user_id для проверки ограничений
+    trainings = gsheets.get_available_trainings(user.id)
 
     if not trainings:
         await callback.message.edit_text(
-            "❌ Нет доступных тренингов для записи.\n"
-            "Попробуйте позже!",
+            "❌ Нет доступных тренингов для записи на текущей неделе.\n"
+            "Попробуйте на следующей неделе!",
+            reply_markup=main_menu()
+        )
+        return
+
+    # Проверяем, может ли пользователь вообще записаться
+    current_week = gsheets.get_current_week_number()
+    if not gsheets.can_user_book_this_week(user.id, current_week, check_only_practice=False):
+        await callback.message.edit_text(
+            f"❌ Вы уже записаны на тренинг или практику на неделе {int(current_week)}!",
             reply_markup=main_menu()
         )
         return
 
     await callback.message.edit_text(
-        "🎓 <b>Доступные тренинги:</b>\n\n"
+        f"🎓 <b>Доступные тренинги (неделя {int(current_week)}):</b>\n\n"
         "Нажмите на тренинг для записи:",
         reply_markup=trainings_keyboard(trainings),
         parse_mode="HTML"

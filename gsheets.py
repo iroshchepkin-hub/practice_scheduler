@@ -615,13 +615,17 @@ class GoogleSheetsManager:
             logger.error(f"Ошибка проверки недели: {e}", exc_info=True)
             return True
 
-    def get_available_trainings(self):
-        """Получить тренинги из кэша"""
+    def get_available_trainings(self, user_id: int = None):
+        """Получить тренинги на текущую неделю"""
         try:
             data = self._get_full_data()
 
             if not data:
                 return []
+
+            # Берем текущую неделю из настроек
+            current_week = self.get_current_week_number()
+            logger.info(f"🎯 Ищем тренинги на неделю {current_week}")
 
             trainings = []
             MAX_SEATS = 25
@@ -635,6 +639,16 @@ class GoogleSheetsManager:
                 if status != 'активно':
                     continue
 
+                # ПРОВЕРЯЕМ НЕДЕЛЮ
+                try:
+                    row_week = float(str(row.get('Неделя', 0)))
+                except:
+                    continue
+
+                if row_week != current_week:
+                    continue
+
+                # Проверка даты
                 date_str = str(row.get('Дата', '')).split()[0]
                 time_str = str(row.get('Время', ''))
 
@@ -644,7 +658,12 @@ class GoogleSheetsManager:
 
                 row_index = idx + 2
 
-                # Форматируем дату
+                # Если передан user_id, проверяем может ли он записаться
+                if user_id and not self.can_user_book_this_week(user_id, current_week, check_only_practice=False):
+                    logger.info(f"Пользователь {user_id} уже записан на тренинг недели {current_week}")
+                    continue
+
+                # Форматируем дату и время
                 date_display = self.format_date(date_str)
 
                 if ' ' in time_str:
@@ -654,7 +673,7 @@ class GoogleSheetsManager:
 
                 # Считаем занятые места
                 booked = 0
-                for i in range(1, MAX_SEATS + 1):
+                for i in range(1, 26):
                     col_name = f"Студент{i}"
                     cell_value = str(row.get(col_name, '')).strip()
                     if cell_value:
@@ -668,9 +687,10 @@ class GoogleSheetsManager:
                         'time': time_str,
                         'available': available,
                         'max_seats': MAX_SEATS,
+                        'week': current_week,
                     })
 
-            logger.info(f"Будущие тренинги: {len(trainings)}")
+            logger.info(f"Тренинги на неделю {current_week}: {len(trainings)}")
             return trainings
 
         except Exception as e:
@@ -708,6 +728,23 @@ class GoogleSheetsManager:
         """Запись на тренинг"""
         try:
             worksheet = self.spreadsheet.worksheet("Расписание")
+
+            # 1. Проверяем неделю
+            week_cell = worksheet.cell(row_index, 2).value  # Колонка B - "Неделя"
+            if not week_cell:
+                logger.error(f"Не могу определить неделю в строке {row_index}")
+                return False
+
+            try:
+                week = float(week_cell)
+            except:
+                logger.error(f"Неверный формат недели: {week_cell}")
+                return False
+
+            # 2. Проверяем, может ли пользователь записаться на эту неделю
+            if not self.can_user_book_this_week(user_id, week, check_only_practice=False):
+                logger.warning(f"Пользователь {user_id} уже записан на неделю {week} (тренинг или практика)")
+                return False
 
             date_str = worksheet.cell(row_index, 3).value  # Колонка C - Дата
             time_str = worksheet.cell(row_index, 4).value  # Колонка D - Время
