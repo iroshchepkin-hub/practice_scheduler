@@ -98,34 +98,33 @@ class GoogleSheetsManager:
 
     def get_current_week_number(self) -> int:
         """Читает текущую неделю из Google Sheets"""
-
-        if self._current_week_cache and time.time() - self._cache_time < self.CACHE_TTL:
-            return self._current_week_cache
-
         try:
-
             settings_ws = self.spreadsheet.worksheet("Настройки")
-
             # Ячейка B3 (строка 3, колонка 2) - текущая неделя
             week_cell = settings_ws.cell(3, 2).value
 
-            if not week_cell:
-                logger.warning("Ячейка с неделей пустая, возвращаем 1")
+            # Если B3 пустое
+            if week_cell is None or str(week_cell).strip() == "":
+                logger.warning("B3 пустая, возвращаем неделю 1")
                 return 1
 
+            try:
+                current_week = int(float(str(week_cell).strip()))
 
-            current_week = int(float(week_cell))
+                # Если B3 = 0, возвращаем 1
+                if current_week <= 0:
+                    logger.warning(f"B3 содержит {current_week} (<=0), возвращаем 1")
+                    return 1
 
+                logger.info(f"📅 Текущая неделя из B3: {current_week}")
+                return current_week
 
-            self._current_week_cache = current_week
-            self._cache_time = time.time()
-
-            logger.info(f"📅 Текущая неделя из таблицы: {current_week}")
-            return current_week
+            except (ValueError, TypeError) as e:
+                logger.error(f"Не число в B3: '{week_cell}', ошибка: {e}")
+                return 1
 
         except Exception as e:
             logger.error(f"Не удалось получить неделю из таблицы: {e}")
-
             return 1
 
     def get_training_week_number(self) -> int:
@@ -133,16 +132,29 @@ class GoogleSheetsManager:
         try:
             settings_ws = self.spreadsheet.worksheet("Настройки")
 
-            # Ячейка B4 (строка 4, колонка 2) - неделя тренингов
+            # Ячейка B4 (строка 4, колонка 2)
             week_cell = settings_ws.cell(4, 2).value
 
-            if not week_cell:
-                # Если B4 пусто, используем B3 (основную)
+            # Если B4 пустое или None или ""
+            if week_cell is None or str(week_cell).strip() == "":
+                logger.warning("B4 пустая, используем B3")
                 return self.get_current_week_number()
 
-            training_week = int(float(week_cell))
-            logger.info(f"📅 Неделя тренингов из B4: {training_week}")
-            return training_week
+            # Пробуем преобразовать в число
+            try:
+                training_week = int(float(str(week_cell).strip()))
+
+                # Проверяем что неделя > 0
+                if training_week <= 0:
+                    logger.warning(f"B4 содержит {training_week} (<=0), используем B3")
+                    return self.get_current_week_number()
+
+                logger.info(f"📅 Неделя тренингов из B4: {training_week}")
+                return training_week
+
+            except (ValueError, TypeError) as e:
+                logger.error(f"Не число в B4: '{week_cell}', ошибка: {e}")
+                return self.get_current_week_number()
 
         except Exception as e:
             logger.error(f"Ошибка чтения B4: {e}")
