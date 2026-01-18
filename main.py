@@ -16,8 +16,6 @@ from handlers.booking import router as booking_router
 from handlers.mybookings import router as my_bookings_router
 # from middleware.chat_member import ChatMembershipMiddleware
 
-dp = Dispatcher
-
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -64,10 +62,9 @@ async def main():
     bot = Bot(token=config.BOT_TOKEN)
     dp = Dispatcher(storage=storage)
 
-
-    dp.include_router(start_router)
-    dp.include_router(booking_router)
-    dp.include_router(my_bookings_router)
+    dp.include_router(start_router)  # 1. Старт и помощь
+    dp.include_router(my_bookings_router)  # 2. Мои записи
+    dp.include_router(booking_router)  # 3. Бронирование
     dp.include_router(notify_router)
 
     notifier_thread = threading.Thread(target=run_notifier_in_thread, daemon=True)

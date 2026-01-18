@@ -1,10 +1,12 @@
 
+import logging
 from aiogram import Router, types
 from aiogram.filters import CommandStart, Command
 from keyboards import main_menu
 from aiogram import F
 
 router = Router()
+logger = logging.getLogger(__name__)
 
 @router.message(CommandStart())
 async def cmd_start(message: types.Message):
@@ -14,6 +16,7 @@ async def cmd_start(message: types.Message):
 
 @router.callback_query(F.data == "help")
 async def help_callback(callback: types.CallbackQuery):
+    logger.info(f"🔍 [ПОМОЩЬ] Получен callback_query. callback_data='{callback.data}', user_id={callback.from_user.id}, username={callback.from_user.username}")
     await callback.answer()
     await callback.message.answer("По всем вопросам, в том числе и для отмены записи, обращайтесь к @elena_bobonich ")
 

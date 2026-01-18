@@ -13,6 +13,7 @@ logger = logging.getLogger(__name__)
 @router.callback_query(F.data == "my_bookings")
 async def show_my_bookings(callback: types.CallbackQuery):
     """Показать все записи пользователя"""
+    logger.info(f"🔍 [МОИ ЗАПИСИ] Получен callback_query. callback_data='{callback.data}', user_id={callback.from_user.id}, username={callback.from_user.username}")
     await callback.answer()
 
     user = callback.from_user
