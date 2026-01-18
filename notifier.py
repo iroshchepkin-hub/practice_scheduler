@@ -14,7 +14,6 @@ def setup_logging(debug: bool = False):
     """Настраивает логирование для notifier"""
     logger = logging.getLogger("notifier")
 
-
     level = logging.DEBUG if debug else logging.INFO
     logger.setLevel(level)
 
@@ -26,7 +25,6 @@ def setup_logging(debug: bool = False):
         datefmt='%Y-%m-%d %H:%M:%S'
     )
 
-
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setFormatter(formatter)
     console_handler.setLevel(level)
@@ -34,24 +32,23 @@ def setup_logging(debug: bool = False):
 
     return logger
 
+
 logger = setup_logging(debug=False)
 
 
 class Notifier:
-    """Класс для отправки уведомлений"""
+    """Класс для отправки уведомлений о практике и тренингах"""
 
     def __init__(self):
         self.bot: Optional[Bot] = None
         self.gs: Optional[GoogleSheetsManager] = None
-
-
 
     async def setup(self):
         """Инициализация ресурсов"""
         try:
             self.bot = Bot(token=config.BOT_TOKEN)
             self.gs = GoogleSheetsManager()
-            logger.info(" Ресурсы инициализированы")
+            logger.info("✅ Ресурсы инициализированы")
         except Exception as e:
             logger.error(f"❌ Ошибка инициализации: {e}")
             raise
@@ -95,18 +92,19 @@ class Notifier:
 
     @staticmethod
     def should_notify(practice_dt: datetime, now: datetime) -> bool:
+        """Проверяем, нужно ли отправлять уведомление (за 24 часа)"""
         time_left = practice_dt - now
 
         if timedelta(hours=23) < time_left < timedelta(hours=25):
-             logger.debug(f"Подходит для уведомления: осталось {time_left}")
-             return True
+            logger.debug(f"✅ Подходит для уведомления: осталось {time_left}")
+            return True
 
-        logger.debug(f"Не подходит: осталось {time_left}")
+        logger.debug(f"❌ Не подходит: осталось {time_left}")
         return False
 
     @staticmethod
-    def format_notification(practice_dt: datetime, time_str: str, record: Dict) -> str:
-        """Форматируем сообщение уведомления"""
+    def format_practice_notification(practice_dt: datetime, time_str: str, tariff: str) -> str:
+        """Форматируем сообщение уведомления о ПРАКТИКЕ"""
         months = {
             1: "января", 2: "февраля", 3: "марта", 4: "апреля",
             5: "мая", 6: "июня", 7: "июля", 8: "августа",
@@ -117,13 +115,30 @@ class Notifier:
 
         return (
             f"⏰ <b>НАПОМИНАНИЕ О ПРАКТИКЕ</b>\n\n"
-            f"Завтра <b>{date_display}</b> в <b>{time_str}</b>\n")
+            f"Завтра <b>{date_display}</b> в <b>{time_str}<b>"
+        )
+
+    @staticmethod
+    def format_training_notification(training_dt: datetime, time_str: str) -> str:
+        """Форматируем сообщение уведомления о ТРЕНИНГЕ"""
+        months = {
+            1: "января", 2: "февраля", 3: "марта", 4: "апреля",
+            5: "мая", 6: "июня", 7: "июля", 8: "августа",
+            9: "сентября", 10: "октября", 11: "ноября", 12: "декабря"
+        }
+
+        date_display = f"{training_dt.day} {months[training_dt.month]}"
+
+        return (
+            f"🎓 <b>НАПОМИНАНИЕ О ТРЕНИНГЕ</b>\n\n"
+            f"Завтра <b>{date_display}</b> в <b>{time_str}</b>"
+        )
 
     def extract_user_ids(self, record: Dict) -> list[int]:
-        """ID всех пользователей из записи (столбцы Студент1-4)"""
+        """ID всех пользователей из записи (столбцы Студент1-25)"""
         user_ids = []
 
-        for i in range(1, 26):
+        for i in range(1, 26):  # 1-25 студентов
             seat_col = f"Студент{i}"
             student_cell = str(record.get(seat_col, '')).strip()
 
@@ -145,56 +160,83 @@ class Notifier:
                 continue
 
         return user_ids
+
+    def get_record_type(self, record: Dict) -> str:
+        """Определяет тип записи: practice, training, или other"""
+        tariff = str(record.get('Тариф', '')).strip()
+
+        if tariff in ["Базовый", "Основной"]:
+            return "practice"
+        elif tariff == "Тренинг":
+            return "training"
+        else:
+            return "other"
+
     async def process_record(self, record: Dict, index: int) -> bool:
-        """Обрабатывает одну запись, отправляет уведомления всем студентам"""
+        """Обрабатывает одну запись, отправляет соответствующие уведомления"""
         logger.debug(f"Обработка записи #{index}")
 
         try:
-            # 1. Получаем пользователей из этой строки
+            # 1. Определяем тип записи
+            record_type = self.get_record_type(record)
+
+            if record_type == "other":
+                logger.debug(f"Запись #{index}: неизвестный тип, пропускаем")
+                return False
+
+            # 2. Получаем пользователей из этой строки
             user_ids = self.extract_user_ids(record)
             if not user_ids:
                 logger.debug(f"Запись #{index}: нет студентов")
                 return False
 
-            # 2. Получаем дату и время
+            # 3. Получаем дату и время
             date_str = record.get('Дата')
             time_str = record.get('Время')
             if not date_str or not time_str:
                 logger.debug(f"Запись #{index}: нет даты или времени")
                 return False
 
-            # 3. Парсим дату
-            practice_dt = self.parse_datetime(date_str, time_str)
-            if not practice_dt:
+            # 4. Парсим дату
+            event_dt = self.parse_datetime(date_str, time_str)
+            if not event_dt:
                 return False
 
-            # 4. Проверяем что дата в будущем
+            # 5. Проверяем что дата в будущем
             now = datetime.now()
-            if practice_dt <= now:
+            if event_dt <= now:
                 logger.debug(f"Запись #{index}: дата в прошлом")
                 return False
 
-            # 5. Проверяем нужно ли отправлять уведомление
-            if not self.should_notify(practice_dt, now):
+            # 6. Проверяем нужно ли отправлять уведомление (за 24 часа)
+            if not self.should_notify(event_dt, now):
                 return False
 
-            # 6. Форматируем сообщение
+            # 7. Форматируем соответствующее сообщение
             clean_time = str(time_str).strip()[:5]
-            message = self.format_notification(practice_dt, clean_time, record)
 
-            # 7. Отправляем студентам в этой записи
+            if record_type == "practice":
+                tariff = str(record.get('Тариф', '')).strip()
+                message = self.format_practice_notification(event_dt, clean_time, tariff)
+                event_type = "практика"
+            else:  # training
+                message = self.format_training_notification(event_dt, clean_time)
+                event_type = "тренинг"
+
+            # 8. Отправляем студентам в этой записи
             notifications_sent = 0
             for user_id in user_ids:
                 try:
                     await self.bot.send_message(user_id, message, parse_mode="HTML")
-                    logger.info(f"✅ Уведомление отправлено: user_id={user_id}, дата={practice_dt.date()} {clean_time}")
+                    logger.info(
+                        f"✅ Уведомление отправлено: user_id={user_id}, {event_type}, дата={event_dt.date()} {clean_time}")
                     notifications_sent += 1
 
                     # Пауза между отправками
                     await asyncio.sleep(0.3)
 
                 except Exception as e:
-                    logger.error(f"Ошибка отправки user_id={user_id}: {e}")
+                    logger.error(f"❌ Ошибка отправки user_id={user_id}: {e}")
 
             return notifications_sent > 0
 
@@ -203,8 +245,8 @@ class Notifier:
             return False
 
     async def run(self):
-        """Основной метод запуска"""
-        logger.info(" Запуск проверки уведомлений")
+        """Основной метод запуска - проверяем практики и тренинги"""
+        logger.info("🔍 Запуск проверки уведомлений")
 
         try:
             self.gs = gsheets
@@ -213,18 +255,45 @@ class Notifier:
             # Получаем данные из таблицы
             worksheet = self.gs.spreadsheet.worksheet("Расписание")
             records = worksheet.get_all_records()
-            logger.info(f" Загружено записей: {len(records)}")
+            logger.info(f"📊 Загружено записей: {len(records)}")
+
+            # Фильтруем только практики и тренинги
+            valid_records = []
+            practice_count = 0
+            training_count = 0
+
+            for record in records:
+                record_type = self.get_record_type(record)
+                if record_type in ["practice", "training"]:
+                    valid_records.append(record)
+
+                    if record_type == "practice":
+                        practice_count += 1
+                    else:
+                        training_count += 1
+
+            logger.info(f"🎯 Найдено записей: практик={practice_count}, тренингов={training_count}")
 
             # Обрабатываем каждую запись
-            notifications_sent = 0
-            for i, record in enumerate(records, start=1):
-                if await self.process_record(record, i):
-                    notifications_sent += 1
+            practice_notifications = 0
+            training_notifications = 0
 
-            logger.info(f" Проверка завершена. Отправлено уведомлений: {notifications_sent}")
+            for i, record in enumerate(valid_records, start=1):
+                record_type = self.get_record_type(record)
+
+                if await self.process_record(record, i):
+                    if record_type == "practice":
+                        practice_notifications += 1
+                    else:
+                        training_notifications += 1
+
+            logger.info(f"✅ Проверка завершена.")
+            logger.info(f"   📝 Практик: {practice_notifications} уведомлений")
+            logger.info(f"   🎓 Тренингов: {training_notifications} уведомлений")
+            logger.info(f"   📊 Всего: {practice_notifications + training_notifications} уведомлений")
 
         except Exception as e:
-            logger.error(f"Notifier error: {e}")
+            logger.error(f"❌ Notifier error: {e}")
 
         finally:
             await self.cleanup()
