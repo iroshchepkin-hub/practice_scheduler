@@ -18,7 +18,7 @@ class GoogleSheetsManager:
         self._full_data_time = 0
         self._current_week_cache = None
         self._cache_time = 0
-        self.CACHE_TTL = 300  # 5 минут
+        self.CACHE_TTL = 60  # 1 минута (было 5 минут)
         self.connect()
 
     def _get_full_data(self):
@@ -76,22 +76,44 @@ class GoogleSheetsManager:
         """Получить тарифы из кэша"""
         try:
             data = self._get_full_data()
+            logger.info(f"📊 Загружено записей для тарифов: {len(data) if data else 0}")
 
             if not data:
+                logger.warning("❌ Нет данных в таблице Расписание")
                 return []
 
             tariffs = set()
+            current_week = self.get_current_week_number()
+            
             for row in data:
                 tariff = str(row.get('Тариф', '')).strip()
-                if tariff and tariff != "Тренинг":
-                    tariffs.add(tariff)
+                status = str(row.get('Статус', '')).strip().lower()
+                
+                # Пропускаем тренинги и неактивные
+                if not tariff or tariff == "Тренинг":
+                    continue
+                    
+                # Проверяем неделю - показываем только тарифы текущей недели
+                try:
+                    row_week = float(str(row.get('Неделя', 0)).strip())
+                except:
+                    continue
+                    
+                if abs(row_week - current_week) > 0.01:
+                    continue
+                    
+                # Проверяем статус
+                if status != 'активно':
+                    continue
+                    
+                tariffs.add(tariff)
 
             result = list(tariffs)
-            logger.info(f"Тарифы из кэша: {len(result)}")
+            logger.info(f"✅ Тарифы для недели {current_week}: {result}")
             return result
 
         except Exception as e:
-            logger.error(f"Ошибка чтения тарифов: {e}")
+            logger.error(f"Ошибка чтения тарифов: {e}", exc_info=True)
             return []
 
     def get_current_week_number(self) -> int:
@@ -654,10 +676,8 @@ class GoogleSheetsManager:
                     logger.info(f"Пропускаем прошедший тренинг: {date_str} {time_str}")
                     continue
 
-                # Если передан user_id, проверяем может ли он записаться
-                if user_id and not self.can_user_book_this_week(user_id, current_week, check_only_practice=False):
-                    logger.info(f"Пользователь {user_id} уже записан на тренинг недели {current_week}")
-                    continue
+                # НЕ проверяем user_id здесь - это делается в хендлере
+                # Это позволяет показать корректное сообщение "вы уже записаны"
 
                 # Форматируем дату и время
                 date_display = self.format_date(date_str)

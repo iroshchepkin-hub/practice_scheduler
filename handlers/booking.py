@@ -17,7 +17,7 @@ from keyboards import (
 
 router = Router()
 logger = logging.getLogger(__name__)
-logger.info("✅ Модуль handlers/booking.py загружен")
+
 
 
 # ========== НАЧАЛО ПРОЦЕССА ЗАПИСИ ==========
@@ -31,6 +31,15 @@ async def start_booking(callback: types.CallbackQuery, state: FSMContext):
 
     # Получаем доступные тарифы из Google Sheets
     tariffs = gsheets.get_available_tariffs()
+    logger.info(f"Получены тарифы: {tariffs}")
+
+    if not tariffs:
+        await callback.message.edit_text(
+            "❌ Нет доступных тарифов для записи.\n"
+            "Попробуйте позже или обратитесь к администратору.",
+            reply_markup=main_menu()
+        )
+        return
 
     # Сохранение тарифов в состояние
     await state.update_data(tariffs=tariffs)
@@ -264,30 +273,30 @@ async def show_trainings(callback: types.CallbackQuery):
     user = callback.from_user
     logger.info(f"Пользователь {user.id} смотрит тренинги")
 
-    # Получаем тренинги
-    trainings = gsheets.get_available_trainings(user.id)
-
     # Проверяем неделю из B4
     training_week = gsheets.get_training_week_number()
 
     if training_week <= 0:
         await callback.message.edit_text(
-            f"❌ На текущей неделе ({int(training_week)}) нет тренингов.\n",
+            f"❌ На текущей неделе нет тренингов.\n",
             reply_markup=main_menu()
         )
         return
+
+    # Проверяем, может ли пользователь вообще записаться (ДО получения списка)
+    if not gsheets.can_user_book_this_week(user.id, training_week, check_only_practice=False):
+        await callback.message.edit_text(
+            f"❌ Вы уже записаны на тренинг или практику на неделе {int(training_week)}!",
+            reply_markup=main_menu()
+        )
+        return
+
+    # Получаем тренинги (без проверки user_id, т.к. уже проверили выше)
+    trainings = gsheets.get_available_trainings()
 
     if not trainings:
         await callback.message.edit_text(
             f"❌ Нет доступных тренингов для записи на неделе {int(training_week)}.\n",
-            reply_markup=main_menu()
-        )
-        return
-
-    # Проверяем, может ли пользователь вообще записаться
-    if not gsheets.can_user_book_this_week(user.id, training_week, check_only_practice=False):
-        await callback.message.edit_text(
-            f"❌ Вы уже записаны на тренинг или практику на неделе {int(training_week)}!",
             reply_markup=main_menu()
         )
         return
