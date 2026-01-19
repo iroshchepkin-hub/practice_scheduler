@@ -332,7 +332,7 @@ class GoogleSheetsManager:
 
             # Проверяем, записан ли пользователь в этой строке
             user_in_this_row = False
-            for col in range(6, 10):  # Колонки 7-10 (G-J)
+            for col in range(6, 46):  # Колонки 7-46 (G-AT) - Студент1-40
                 if col < len(row):
                     cell_value = str(row[col]).strip()
                     if cell_value and f"{user_id_str}|" in cell_value:
@@ -408,7 +408,7 @@ class GoogleSheetsManager:
             row_values = worksheet.row_values(row_index)
             user_id_str = str(user_id)
 
-            for col in range(7, 11):  # Студент1-4
+            for col in range(7, 47):  # Студент1-40 (колонки G-AT)
                 if col - 1 < len(row_values):
                     cell_value = str(row_values[col - 1]).strip()
                     if cell_value and f"{user_id_str}|" in cell_value:
@@ -426,7 +426,7 @@ class GoogleSheetsManager:
 
             # 5. Ищем свободное место
             for seat_num in range(1, max_seats + 1):
-                col = 6 + seat_num  # 7, 8, 9, 10
+                col = 6 + seat_num  # 7, 8, 9... (G, H, I...)
                 cell_value = worksheet.cell(row_index, col).value
 
                 if not cell_value or str(cell_value).strip() == '':
@@ -490,7 +490,7 @@ class GoogleSheetsManager:
             bookings = []
 
             for _, row in df.iterrows():
-                for i in range(1, 26):
+                for i in range(1, 41):  # Студент1-40
                     seat_col = f"Студент{i}"
                     student_cell = str(row.get(seat_col, '')).strip()
 
@@ -544,8 +544,9 @@ class GoogleSheetsManager:
             if df.empty:
                 return False
 
-            # Проверяем все столбцы Студент1-4
-            for seat_col in ['Студент1', 'Студент2', 'Студент3', 'Студент4']:
+            # Проверяем все столбцы Студент1-40
+            for i in range(1, 41):
+                seat_col = f"Студент{i}"
                 # Фильтруем строки где в этом столбце есть наш user_id
                 mask = df[seat_col].astype(str).str.contains(str(user_id))
                 matching_rows = df[mask]
@@ -688,7 +689,7 @@ class GoogleSheetsManager:
 
                 # Считаем занятые места
                 booked = 0
-                for i in range(1, 26):
+                for i in range(1, 41):  # Студент1-40
                     col_name = f"Студент{i}"
                     cell_value = str(row.get(col_name, '')).strip()
                     if cell_value:
@@ -774,7 +775,7 @@ class GoogleSheetsManager:
             row_values = worksheet.row_values(row_index)
             user_id_str = str(user_id)
 
-            for col in range(7, 32):
+            for col in range(7, 47):  # Студент1-40 (колонки G-AT)
                 if col - 1 < len(row_values):
                     cell_value = str(row_values[col - 1]).strip()
                     if cell_value and f"{user_id_str}|" in cell_value:
@@ -792,10 +793,10 @@ class GoogleSheetsManager:
                     logger.error(f"Ошибка проверки ограничения недели: {e}")
 
             # 5. Ищем свободное место
-            MAX_SEATS = 25
+            MAX_SEATS = 40  # Студент1-40
 
             for seat_num in range(1, MAX_SEATS + 1):
-                col = 6 + seat_num  # 7, 8, 9, ..., 31
+                col = 6 + seat_num  # 7, 8, 9, ..., 46 (G-AT)
                 cell_value = worksheet.cell(row_index, col).value
 
                 if not cell_value or str(cell_value).strip() == '':

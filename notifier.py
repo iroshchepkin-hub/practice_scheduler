@@ -135,10 +135,10 @@ class Notifier:
         )
 
     def extract_user_ids(self, record: Dict) -> list[int]:
-        """ID всех пользователей из записи (столбцы Студент1-25)"""
+        """ID всех пользователей из записи (столбцы Студент1-40)"""
         user_ids = []
 
-        for i in range(1, 26):  # 1-25 студентов
+        for i in range(1, 41):  # 1-40 студентов
             seat_col = f"Студент{i}"
             student_cell = str(record.get(seat_col, '')).strip()
 
