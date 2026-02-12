@@ -256,7 +256,7 @@ async def cancel_booking(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
     await callback.message.edit_text(
-        f"👋 Привет, {callback.from_user.first_name}!\nЯ бот для записи на практику.",
+        f"👋 Привет, {callback.from_user.first_name} ! Это бот для записи на занятия курса 'Эффективные продажи'.",
         reply_markup=main_menu()
     )
 
